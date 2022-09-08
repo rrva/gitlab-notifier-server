@@ -10,7 +10,12 @@ import java.io.IOException
 class HookServlet : HttpServlet() {
     private val log = LoggerFactory.getLogger(this.javaClass)
     private val jsonMapper = JsonMapper()
+    private val secretToken = System.getenv("SECRET_TOKEN")
     override fun service(request: HttpServletRequest, response: HttpServletResponse) {
+        if (secretToken != null && secretToken != request.getHeader("X-Gitlab-Token")) {
+            response.status = 403
+            return
+        }
         val node = try {
             jsonMapper.readTree(request.inputStream)
         } catch (e: IOException) {
@@ -20,17 +25,18 @@ class HookServlet : HttpServlet() {
         if (objectKind != "pipeline") {
             response.status = 400
             response.writer.println("only pipeline events supported")
+            return
+        }
+        val payload = jsonMapper.writeValueAsString(node)
+        log.info("Received payload $payload")
+        val produced = EventBus.produceEvent(Event(payload))
+        if (produced) {
+            response.status = 200
+            response.writer.println("OK")
         } else {
-            val payload = jsonMapper.writeValueAsString(node)
-            log.info("Received payload $payload")
-            val produced = EventBus.produceEvent(Event(payload))
-            if (produced) {
-                response.status = 200
-                response.writer.println("OK")
-            } else {
-                response.status = 500
-                response.writer.println("Failed to produce event")
-            }
+            response.status = 500
+            response.writer.println("Failed to produce event")
         }
     }
+
 }
